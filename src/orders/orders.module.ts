@@ -6,11 +6,32 @@ import { Order } from './entities/order.entity';
 import { OrderItem } from './entities/order-item.entity';
 import { Product } from '../products/entities/product.entity';
 import { CartModule } from '../cart/cart.module';
-import { CartService } from '../cart/cart.service';
+import { ClientsModule, Transport } from '@nestjs/microservices';
+import { ConfigService } from '@nestjs/config';
+import { OrderEventsController } from './order-events.controller';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Order, OrderItem, Product]), CartService],
-  controllers: [OrdersController],
+  imports: [
+    TypeOrmModule.forFeature([Order, OrderItem, Product]),
+    CartModule,
+    ClientsModule.registerAsync([
+      {
+        name: 'ORDER_EVENTS_SERVICE',
+        inject: [ConfigService],
+        useFactory: (config: ConfigService) => ({
+          transport: Transport.RMQ,
+          options: {
+            urls: [
+              `amqp://${config.get('RABBITMQ_USER')}:${config.get('RABBITMQ_PASSWORD')}@localhost:5672`,
+            ],
+            queue: 'order_events_queue',
+            queueOptions: { durable: false },
+          },
+        }),
+      },
+    ]),
+  ],
+  controllers: [OrdersController, OrderEventsController],
   providers: [OrdersService],
   exports: [OrdersService],
 })

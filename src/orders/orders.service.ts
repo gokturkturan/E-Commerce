@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  Inject,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -11,6 +12,7 @@ import { Product } from '../products/entities/product.entity';
 import { CartService } from '../cart/cart.service';
 import { User } from '../users/entities/user.entity';
 import { CartItem } from '../cart/entities/cart-item.entity';
+import { ClientProxy } from '@nestjs/microservices';
 
 @Injectable()
 export class OrdersService {
@@ -19,6 +21,8 @@ export class OrdersService {
     private readonly ordersRepository: Repository<Order>,
     @InjectDataSource() private readonly dataSource: DataSource,
     private readonly cartService: CartService,
+    @Inject('ORDER_EVENTS_SERVICE')
+    private readonly orderEventsClient: ClientProxy,
   ) {}
 
   async create(userId: string): Promise<Order> {
@@ -66,6 +70,12 @@ export class OrdersService {
 
       const savedOrder = await manager.save(order);
       await manager.delete(CartItem, { cart: { id: cart.id } });
+
+      this.orderEventsClient.emit('order_created', {
+        orderId: savedOrder.id,
+        userId,
+        total: savedOrder.total,
+      });
 
       return savedOrder;
     });
