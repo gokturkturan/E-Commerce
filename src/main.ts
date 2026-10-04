@@ -3,6 +3,8 @@ import { NestFactory, Reflector } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { ConfigService } from '@nestjs/config';
 import { MicroserviceOptions, Transport } from '@nestjs/microservices';
+import { GlobalExceptionFilter } from './common/filters/global-exception.filter';
+import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -12,7 +14,10 @@ async function bootstrap() {
     new ValidationPipe({ whitelist: true, transform: true }),
   );
 
+  app.useGlobalFilters(new GlobalExceptionFilter());
+
   app.useGlobalInterceptors(
+    new LoggingInterceptor(),
     // @Exclude() un çalışmasını sağlıyor
     new ClassSerializerInterceptor(app.get(Reflector)),
   );

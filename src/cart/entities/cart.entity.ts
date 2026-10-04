@@ -20,7 +20,7 @@ export class Cart {
   user: User;
 
   @OneToMany(() => CartItem, (item) => item.cart)
-  items: CartItem[] = [];
+  items: CartItem[];
 
   @CreateDateColumn()
   createdAt: Date;
