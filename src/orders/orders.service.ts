@@ -5,7 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
-import { Order } from './entities/order.entity';
+import { Order, OrderStatus } from './entities/order.entity';
 import { DataSource, Repository } from 'typeorm';
 import { OrderItem } from './entities/order-item.entity';
 import { Product } from '../products/entities/product.entity';
@@ -88,10 +88,10 @@ export class OrdersService {
     });
   }
 
-  async findOneForUser(userId: string, orderId: string) {
+  async findOneForUser(userId: string, orderId: string): Promise<Order> {
     const order = await this.ordersRepository.findOne({
       where: { id: orderId },
-      relations: { items: true, user: true },
+      relations: { items: { product: true }, user: true },
     });
 
     if (!order || order.user.id !== userId) {
@@ -99,5 +99,67 @@ export class OrdersService {
     }
 
     return order;
+  }
+
+  async pay(userId: string, orderId: string) {
+    const order = await this.findOneForUser(userId, orderId);
+
+    if (order.status !== OrderStatus.PENDING) {
+      throw new BadRequestException(
+        `Cannot pay for an order with status ${order.status}`,
+      );
+    }
+
+    order.status = OrderStatus.PAID;
+    return this.ordersRepository.save(order);
+  }
+
+  async cancel(userId: string, orderId: string) {
+    const order = await this.findOneForUser(userId, orderId);
+
+    if (order.status !== OrderStatus.PENDING) {
+      throw new BadRequestException(
+        `Cannot cancel an order with status ${order.status}`,
+      );
+    }
+
+    return this.dataSource.transaction(async (manager) => {
+      for (const item of order.items) {
+        await manager.increment(
+          Product,
+          { id: item.product.id },
+          'stock',
+          item.quantity,
+        );
+      }
+
+      order.status = OrderStatus.CANCELLED;
+      return manager.save(order);
+    });
+  }
+
+  async findOneOrFail(orderId: string) {
+    const order = await this.ordersRepository.findOne({
+      where: { id: orderId },
+    });
+
+    if (!order) {
+      throw new NotFoundException(`Order with id ${orderId} not found`);
+    }
+
+    return order;
+  }
+
+  async ship(orderId: string) {
+    const order = await this.findOneOrFail(orderId);
+
+    if (order.status !== OrderStatus.PAID) {
+      throw new BadRequestException(
+        `Cannot ship an order with status ${order.status}`,
+      );
+    }
+
+    order.status = OrderStatus.SHIPPED;
+    return this.ordersRepository.save(order);
   }
 }
