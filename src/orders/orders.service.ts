@@ -84,7 +84,7 @@ export class OrdersService {
   async findAllForUser(userId: string): Promise<Order[]> {
     return this.ordersRepository.find({
       where: { user: { id: userId } },
-      relations: { items: true },
+      relations: { items: { product: { category: true } } },
     });
   }
 

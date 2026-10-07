@@ -36,6 +36,10 @@ async function bootstrap() {
     },
   });
 
+  app.enableCors({
+    origin: configService.get<string>('CORS_ORIGIN', 'http://localhost:5173'),
+  });
+
   await app.startAllMicroservices();
 
   await app.listen(process.env.PORT ?? 3000);
