@@ -1,124 +1,220 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# E-Commerce API — NestJS
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+A REST backend for an online shop: authentication, product catalogue, shopping cart and an order lifecycle with stock reservation, built with **NestJS**, **PostgreSQL** and **RabbitMQ**.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+The focus of this project is the backend concerns that matter in real commerce systems: data consistency under concurrent orders, a clear order state machine, token-based auth with rotation, and event-driven integration.
 
-## Description
+![NestJS](https://img.shields.io/badge/NestJS-E0234E?logo=nestjs&logoColor=white)
+![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-4169E1?logo=postgresql&logoColor=white)
+![RabbitMQ](https://img.shields.io/badge/RabbitMQ-FF6600?logo=rabbitmq&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-2496ED?logo=docker&logoColor=white)
+![Jest](https://img.shields.io/badge/Jest-C21325?logo=jest&logoColor=white)
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+---
 
-## Project setup
+## Features
 
-```bash
-$ npm install
+- **Authentication** — register / login with bcrypt-hashed passwords, short-lived JWT access tokens and long-lived refresh tokens with **rotation** and **logout (revocation)**
+- **Authorization** — role-based access (`customer`, `admin`) via a custom `@Roles()` decorator and `RolesGuard`
+- **Catalogue** — categories and products (CRUD; write operations admin-only)
+- **Cart** — one cart per user; add, update quantity, remove items; ownership checks on every item
+- **Orders** — create an order from the cart, pay, cancel, ship, with an explicit status state machine
+- **Oversell-safe stock reservation** — stock is decremented atomically inside a database transaction (see [Design notes](#design-notes))
+- **Event-driven** — an `order_created` event is published to RabbitMQ and consumed by a separate handler
+- **Cross-cutting concerns** — global validation (`whitelist` + `transform`), global exception filter with a consistent error shape, request logging interceptor with response times, sensitive fields hidden from responses via `class-transformer`
+- **Tests** — 71 unit tests across services and controllers (Jest)
+
+## Tech stack
+
+| Area | Technology |
+| --- | --- |
+| Framework | NestJS 12, TypeScript |
+| Database | PostgreSQL 16, TypeORM |
+| Messaging | RabbitMQ (`@nestjs/microservices`) |
+| Auth | Passport JWT, bcrypt |
+| Validation | class-validator, class-transformer |
+| Testing | Jest, Supertest |
+| Tooling | Docker Compose, Oxlint, Prettier |
+
+## Architecture
+
+```
+                  ┌──────────────────────────── NestJS application ────────────────────────────┐
+                  │                                                                            │
+ HTTP client ───▶ │  ValidationPipe → JwtAuthGuard / RolesGuard → Controller → Service         │
+                  │        ▲                                                   │               │
+                  │        └── LoggingInterceptor · GlobalExceptionFilter      │ TypeORM       │
+                  │                                                            ▼               │
+                  │  Modules: auth · users · categories · products · cart · orders            │
+                  │                                     │                                      │
+                  └─────────────────────────────────────┼──────────────────────────────────────┘
+                                                        │                        │
+                                          emit "order_created"                   ▼
+                                                        ▼                 ┌──────────────┐
+                                             ┌────────────────────┐       │  PostgreSQL  │
+                                             │ RabbitMQ           │       └──────────────┘
+                                             │ order_events_queue │
+                                             └─────────┬──────────┘
+                                                       ▼
+                                             OrderEventsController
+                                             (@EventPattern consumer)
 ```
 
-## Compile and run the project
+Each domain lives in its own Nest module (`src/<module>`) with its controller, service, DTOs, entities and specs. Shared concerns live in `src/common`.
 
-```bash
-# development
-$ npm run start
+### Order state machine
 
-# watch mode
-$ npm run start:dev
-
-# production mode
-$ npm run start:prod
+```
+            pay                ship (admin)
+ PENDING ─────────▶ PAID ─────────────────▶ SHIPPED
+    │
+    │ cancel  (stock is returned)
+    ▼
+ CANCELLED
 ```
 
-## Run tests
+Any transition not shown above is rejected with `400 Bad Request`.
 
-```bash
-# unit tests
-$ npm run test
+## Design notes
 
-# e2e tests
-$ npm run test:e2e
+**Preventing overselling.** When an order is created, every cart line decrements stock with a single conditional statement inside one transaction:
 
-# test coverage
-$ npm run test:cov
+```sql
+UPDATE products SET stock = stock - :qty WHERE id = :id AND stock >= :qty
 ```
 
-## Deployment
+If any line affects zero rows, the whole transaction rolls back and the request fails with `Insufficient stock`. The check and the decrement are one atomic operation, so two concurrent checkouts cannot both take the last item, and no explicit row locks or read-then-write logic are needed. Order lines also store a snapshot of `productName` and `unitPrice`, so later price changes do not rewrite order history.
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
+**Refresh-token rotation.** Refresh tokens are stored server-side as SHA-256 hashes, never in plain text. Every `/auth/refresh` call deletes the presented token and issues a new pair, so a refresh token can be used only once. `/auth/logout` revokes the token. bcrypt is deliberately *not* used for these tokens: it truncates input to 72 bytes, and JWTs for the same user share that prefix, so every token would have produced the same hash.
 
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+**Consistent error responses.** All errors go through `GlobalExceptionFilter` and share one shape:
 
-```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
+```json
+{ "statusCode": 400, "path": "/orders", "timeStamp": "2026-10-05T12:00:00.000Z", "message": "Cart is empty" }
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+Unexpected (non-HTTP) exceptions are logged and returned as a generic `500` without leaking internals.
 
-## Observability
+## API overview
 
-In production applications, observability is essential for understanding how your system behaves, detecting issues early, and maintaining reliable performance.
+🔒 = requires `Authorization: Bearer <accessToken>` · 👑 = admin only
 
-[NestJS Observe](https://observe.nestjs.com) automatically instruments your NestJS application, giving you deep visibility into your system with minimal setup:
+| Method | Endpoint | Description |
+| --- | --- | --- |
+| POST | `/auth/register` | Create an account, returns access + refresh token |
+| POST | `/auth/login` | Log in, returns access + refresh token |
+| POST | `/auth/refresh` | Exchange a refresh token for a new pair (rotation) |
+| POST | `/auth/logout` | Revoke a refresh token |
+| GET | `/users/me` 🔒 | Current user's profile |
+| GET | `/categories` | List categories |
+| GET | `/categories/:id` | Get a category |
+| POST · PATCH · DELETE | `/categories[/:id]` 🔒👑 | Manage categories |
+| GET | `/products` | List products |
+| GET | `/products/:id` | Get a product |
+| POST · PATCH · DELETE | `/products[/:id]` 🔒👑 | Manage products |
+| GET | `/cart` 🔒 | Get (or lazily create) the user's cart |
+| POST | `/cart/items` 🔒 | Add a product to the cart |
+| PATCH | `/cart/items/:id` 🔒 | Change an item's quantity |
+| DELETE | `/cart/items/:id` 🔒 | Remove an item |
+| POST | `/orders` 🔒 | Create an order from the cart |
+| GET | `/orders` 🔒 | List the user's orders |
+| GET | `/orders/:id` 🔒 | Get one of the user's orders |
+| POST | `/orders/:id/pay` 🔒 | Mark a pending order as paid |
+| POST | `/orders/:id/cancel` 🔒 | Cancel a pending order and return stock |
+| PATCH | `/orders/:id/ship` 🔒👑 | Mark a paid order as shipped |
 
-- **Distributed tracing:** Follow requests across services and understand how they flow through your system.
-- **Waterfall analysis:** Visualize request execution and identify slow operations, bottlenecks, and unexpected delays.
-- **Performance analysis:** Analyze application performance in real time and quickly pinpoint areas that need optimization.
-- **Metrics:** Track key application and infrastructure metrics to understand system health and performance trends.
-- **Logging:** Centralize and correlate logs with traces and other telemetry to make debugging easier.
-- **Error tracking:** Detect errors quickly and investigate their root causes with the surrounding context.
-- **SLA monitoring:** Track service-level objectives and identify when your application is approaching or exceeding defined thresholds.
-- **Alarms and alerts:** Set up alerts for critical errors, performance degradation, SLA violations, and other anomalies so your team can react quickly.
+## Getting started
 
-To add it to this project:
+**Prerequisites:** Node.js 20+, Docker
 
 ```bash
-$ npm install @nestjs/observe
+# 1. Install dependencies
+npm install
+
+# 2. Configure environment
+cp .env.example .env        # then set real secrets
+
+# 3. Start PostgreSQL and RabbitMQ
+docker compose up -d
+
+# 4. Run the API (http://localhost:3000)
+npm run start:dev
 ```
 
-Then follow the [setup guide](https://docs.nestjs.com/observability/overview) - it takes a single import and an app key.
+The RabbitMQ management UI is available at http://localhost:15672.
 
-The free plan needs no payment details and covers 300,000 events a month. You can also browse the [live demo](https://www.observe-demo.nestjs.com/dashboard) first - the whole dashboard over a busy service's data, with nothing to install.
+> **Creating an admin:** new users are registered as `customer`. To try the admin endpoints locally, promote a user in the database:
+> ```sql
+> UPDATE users SET role = 'admin' WHERE email = 'you@example.com';
+> ```
+> then log in again so the new role is included in the token.
 
-## Resources
+### Example flow
 
-Check out a few resources that may come in handy when working with NestJS:
+```bash
+# Register and keep the access token
+TOKEN=$(curl -s -X POST localhost:3000/auth/register \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"jane@example.com","password":"secret123"}' | jq -r .accessToken)
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Auto-instrument your application with [NestJS Observe](https://observe.nestjs.com). Distributed tracing, metrics, and logging made easy. Error tracking and performance monitoring for your NestJS applications.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+# Add a product to the cart
+curl -X POST localhost:3000/cart/items -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"productId":"<product-uuid>","quantity":2}'
 
-## Support
+# Check out, then pay
+curl -X POST localhost:3000/orders -H "Authorization: Bearer $TOKEN"
+curl -X POST localhost:3000/orders/<order-uuid>/pay -H "Authorization: Bearer $TOKEN"
+```
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+## Environment variables
 
-## Stay in touch
+| Variable | Description | Example |
+| --- | --- | --- |
+| `POSTGRES_HOST` / `POSTGRES_PORT` | Database host and port | `localhost` / `5432` |
+| `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | Database credentials | `ecommerce` |
+| `RABBITMQ_USER` / `RABBITMQ_PASSWORD` | RabbitMQ credentials | `ecommerce` |
+| `RABBITMQ_PORT` / `RABBITMQ_MANAGEMENT_PORT` | Host ports for RabbitMQ (Docker) | `5672` / `15672` |
+| `PORT` | HTTP port of the API | `3000` |
+| `JWT_SECRET` / `JWT_EXPIRES_IN` | Access-token secret and lifetime | `15m` |
+| `JWT_REFRESH_SECRET` / `JWT_REFRESH_EXPIRES_IN` | Refresh-token secret and lifetime | `7d` |
 
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
+## Testing
 
-## License
+```bash
+npm run test        # unit tests
+npm run test:cov    # coverage report
+npm run test:e2e    # end-to-end tests
+```
 
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+## Project structure
+
+```
+src/
+├── auth/          # register, login, refresh, logout · JWT strategy · guards · decorators
+├── users/         # user entity and profile endpoint
+├── categories/    # category CRUD
+├── products/      # product CRUD
+├── cart/          # per-user cart and cart items
+├── orders/        # order lifecycle, stock reservation, RabbitMQ event consumer
+├── common/        # global exception filter, logging interceptor
+├── app.module.ts
+└── main.ts
+```
+
+## Roadmap
+
+Planned next steps:
+
+- **Idempotent payments:** `Idempotency-Key` header and a conditional status update on `/orders/:id/pay`, so retried or concurrent requests cannot double-process a payment
+- **Transactional outbox:** publish `order_created` only after the transaction commits, so no event is ever sent for a rolled-back order
+- **Payment provider integration:** mock provider with signed webhook handling
+- **Database migrations:** replace TypeORM `synchronize` with versioned migrations
+- **OpenAPI / Swagger** documentation
+- **E2E tests** for the full checkout flow, plus a **GitHub Actions** CI pipeline
+- Pagination and filtering for product listings
+
+## Author
+
+**Göktürk Turan** · Backend Developer · [gokturkturan.com](https://gokturkturan.com) · [LinkedIn](https://www.linkedin.com/in/gokturkturan/)
