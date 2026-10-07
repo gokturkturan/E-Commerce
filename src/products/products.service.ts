@@ -5,6 +5,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Product } from './entities/product.entity';
 import { DeepPartial, Repository } from 'typeorm';
 import { Category } from '../categories/entities/category.entity';
+import { FindProductsDto } from './dto/find-products.dto';
 
 @Injectable()
 export class ProductsService {
@@ -32,12 +33,64 @@ export class ProductsService {
     return this.productRepository.save(product);
   }
 
-  findAll(): Promise<Product[]> {
-    return this.productRepository.find();
+  findAll(query: FindProductsDto): Promise<Product[]> {
+    const queryBuilder = this.productRepository
+      .createQueryBuilder('product')
+      .leftJoinAndSelect('product.category', 'category');
+
+    if (query.search) {
+      queryBuilder.andWhere(
+        '(product.name ILIKE :search OR category.name ILIKE :search)',
+        {
+          search: `%${query.search}%`,
+        },
+      );
+    }
+
+    if (query.categoryId) {
+      queryBuilder.andWhere('category.id = :categoryId', {
+        categoryId: query.categoryId,
+      });
+    }
+
+    if (query.minPrice !== undefined) {
+      queryBuilder.andWhere('product.price >= :minPrice', {
+        minPrice: query.minPrice,
+      });
+    }
+
+    if (query.maxPrice !== undefined) {
+      queryBuilder.andWhere('product.price <= :maxPrice', {
+        maxPrice: query.maxPrice,
+      });
+    }
+
+    if (query.inStock) {
+      queryBuilder.andWhere('product.stock > 0');
+    }
+
+    switch (query.sort) {
+      case 'price-asc':
+        queryBuilder.orderBy('product.price', 'ASC');
+        break;
+      case 'price-desc':
+        queryBuilder.orderBy('product.price', 'DESC');
+        break;
+      case 'name':
+        queryBuilder.orderBy('product.name', 'ASC');
+        break;
+      default:
+        queryBuilder.orderBy('product.createdAt', 'DESC');
+    }
+
+    return queryBuilder.getMany();
   }
 
   async findOne(id: string): Promise<Product> {
-    const product = await this.productRepository.findOne({ where: { id: id } });
+    const product = await this.productRepository.findOne({
+      where: { id: id },
+      relations: { category: true },
+    });
 
     if (!product) {
       throw new NotFoundException(`Product with id ${id} not found`);
