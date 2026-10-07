@@ -51,4 +51,9 @@ export class CartController {
   ) {
     return this.cartService.removeItem(user.userId, itemId);
   }
+
+  @Delete()
+  clear(@CurrentUser() user: AuthenticatedUser) {
+    return this.cartService.clear(user.userId);
+  }
 }

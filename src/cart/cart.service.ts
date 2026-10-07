@@ -97,4 +97,10 @@ export class CartService {
     await this.cartItemRepository.delete(itemId);
     return this.getOrCreateCart(userId);
   }
+
+  async clear(userId: string): Promise<Cart> {
+    const cart = await this.getOrCreateCart(userId);
+    await this.cartItemRepository.delete({ cart: { id: cart.id } });
+    return this.getOrCreateCart(userId);
+  }
 }
