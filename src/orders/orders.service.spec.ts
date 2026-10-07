@@ -270,7 +270,11 @@ describe('OrdersService', () => {
     });
 
     it('should mark a paid order as shipped', async () => {
-      const order = { id: 'order-1', status: OrderStatus.PAID };
+      const order = {
+        id: 'order-1',
+        status: OrderStatus.PAID,
+        user: { id: 'user-1' },
+      };
       mockOrdersRepository.findOne.mockResolvedValue(order);
       mockOrdersRepository.save.mockImplementation((o) => Promise.resolve(o));
 

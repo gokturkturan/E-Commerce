@@ -118,7 +118,15 @@ export class OrdersService {
     }
 
     order.status = OrderStatus.PAID;
-    return this.ordersRepository.save(order);
+    const savedOrder = await this.ordersRepository.save(order);
+
+    this.orderEventsClient.emit('order_paid', {
+      orderId: savedOrder.id,
+      userId,
+      total: savedOrder.total,
+    });
+
+    return savedOrder;
   }
 
   async cancel(userId: string, orderId: string) {
@@ -141,13 +149,22 @@ export class OrdersService {
       }
 
       order.status = OrderStatus.CANCELLED;
-      return manager.save(order);
+      const savedOrder = await manager.save(order);
+
+      this.orderEventsClient.emit('order_cancelled', {
+        orderId: savedOrder.id,
+        userId,
+        total: savedOrder.total,
+      });
+
+      return savedOrder;
     });
   }
 
   async findOneOrFail(orderId: string) {
     const order = await this.ordersRepository.findOne({
       where: { id: orderId },
+      relations: { user: true },
     });
 
     if (!order) {
@@ -167,6 +184,14 @@ export class OrdersService {
     }
 
     order.status = OrderStatus.SHIPPED;
-    return this.ordersRepository.save(order);
+    const savedOrder = await this.ordersRepository.save(order);
+
+    this.orderEventsClient.emit('order_shipped', {
+      orderId: savedOrder.id,
+      userId: order.user.id,
+      total: savedOrder.total,
+    });
+
+    return savedOrder;
   }
 }
