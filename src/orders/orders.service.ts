@@ -88,6 +88,13 @@ export class OrdersService {
     });
   }
 
+  findAllAdmin() {
+    return this.ordersRepository.find({
+      relations: { items: { product: true }, user: true },
+      order: { createdAt: 'DESC' },
+    });
+  }
+
   async findOneForUser(userId: string, orderId: string): Promise<Order> {
     const order = await this.ordersRepository.findOne({
       where: { id: orderId },

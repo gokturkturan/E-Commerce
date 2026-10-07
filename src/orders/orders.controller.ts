@@ -24,6 +24,13 @@ export class OrdersController {
     return this.ordersService.findAllForUser(user.userId);
   }
 
+  @Get('admin/all')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN)
+  findAllAdmin() {
+    return this.ordersService.findAllAdmin();
+  }
+
   @Get(':id')
   findOne(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string) {
     return this.ordersService.findOneForUser(user.userId, id);
