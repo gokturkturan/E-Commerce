@@ -9,11 +9,13 @@ import { CartModule } from '../cart/cart.module';
 import { ClientsModule, Transport } from '@nestjs/microservices';
 import { ConfigService } from '@nestjs/config';
 import { OrderEventsController } from './order-events.controller';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([Order, OrderItem, Product]),
     CartModule,
+    NotificationsModule,
     ClientsModule.registerAsync([
       {
         name: 'ORDER_EVENTS_SERVICE',
