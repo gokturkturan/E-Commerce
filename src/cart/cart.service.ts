@@ -30,6 +30,7 @@ export class CartService {
 
     const newCart = this.cartRepository.create({
       user: { id: userId } as User,
+      items: [],
     });
     return this.cartRepository.save(newCart);
   }

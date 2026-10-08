@@ -76,6 +76,7 @@ describe('CartService', () => {
 
       expect(mockCartRepository.create).toHaveBeenCalledWith({
         user: { id: 'user-1' },
+        items: [],
       });
       expect(result).toEqual(saved);
     });
