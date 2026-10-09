@@ -13,6 +13,7 @@ import { CartService } from '../cart/cart.service';
 import { User } from '../users/entities/user.entity';
 import { CartItem } from '../cart/entities/cart-item.entity';
 import { ClientProxy } from '@nestjs/microservices';
+import { ShippingAddressDto } from './dto/create-order.dto';
 
 @Injectable()
 export class OrdersService {
@@ -25,7 +26,10 @@ export class OrdersService {
     private readonly orderEventsClient: ClientProxy,
   ) {}
 
-  async create(userId: string): Promise<Order> {
+  async create(
+    userId: string,
+    shippingAddress: ShippingAddressDto,
+  ): Promise<Order> {
     const cart = await this.cartService.getOrCreateCart(userId);
 
     if (cart.items.length === 0) {
@@ -66,6 +70,7 @@ export class OrdersService {
         user: { id: userId } as User,
         total,
         items: orderItemsData as OrderItem[],
+        shippingAddress,
       });
 
       const savedOrder = await manager.save(order);

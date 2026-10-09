@@ -44,8 +44,22 @@ describe('OrdersController', () => {
   });
 
   it('create should delegate to the service with the current user id', () => {
-    controller.create(user);
-    expect(mockOrdersService.create).toHaveBeenCalledWith('user-1');
+    const shippingAddress = {
+      firstName: 'Jane',
+      lastName: 'Doe',
+      email: 'jane@test.com',
+      phone: '555-0100',
+      address: '1 Main St',
+      city: 'Springfield',
+      district: 'IL',
+    };
+
+    controller.create(user, { shippingAddress });
+
+    expect(mockOrdersService.create).toHaveBeenCalledWith(
+      'user-1',
+      shippingAddress,
+    );
   });
 
   it('findAllForUser should delegate to the service with the current user id', () => {

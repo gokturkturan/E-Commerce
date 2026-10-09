@@ -17,6 +17,16 @@ export enum OrderStatus {
   CANCELLED = 'cancelled',
 }
 
+export interface ShippingAddress {
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone: string;
+  address: string;
+  city: string;
+  district: string;
+}
+
 @Entity('orders')
 export class Order {
   @PrimaryGeneratedColumn('uuid')
@@ -41,6 +51,9 @@ export class Order {
 
   @OneToMany(() => OrderItem, (item) => item.order, { cascade: true })
   items: OrderItem[];
+
+  @Column({ type: 'jsonb', nullable: true })
+  shippingAddress: ShippingAddress | null;
 
   @CreateDateColumn()
   createdAt: Date;

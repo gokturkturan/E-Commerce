@@ -1,5 +1,14 @@
-import { Controller, Get, Post, Param, UseGuards, Patch } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Param,
+  UseGuards,
+  Patch,
+  Body,
+} from '@nestjs/common';
 import { OrdersService } from './orders.service';
+import { CreateOrderDto } from './dto/create-order.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import {
   type AuthenticatedUser,
@@ -15,8 +24,11 @@ export class OrdersController {
   constructor(private readonly ordersService: OrdersService) {}
 
   @Post()
-  create(@CurrentUser() user: AuthenticatedUser) {
-    return this.ordersService.create(user.userId);
+  create(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: CreateOrderDto,
+  ) {
+    return this.ordersService.create(user.userId, dto.shippingAddress);
   }
 
   @Get()
