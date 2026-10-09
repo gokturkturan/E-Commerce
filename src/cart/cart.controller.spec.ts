@@ -7,7 +7,7 @@ describe('CartController', () => {
   let controller: CartController;
 
   const mockCartService = {
-    getOrCreateCart: jest.fn(),
+    getCart: jest.fn(),
     addItem: jest.fn(),
     updateItem: jest.fn(),
     removeItem: jest.fn(),
@@ -43,7 +43,7 @@ describe('CartController', () => {
 
   it('getCart should delegate to the service with the current user id', () => {
     controller.getCart(user);
-    expect(mockCartService.getOrCreateCart).toHaveBeenCalledWith('user-1');
+    expect(mockCartService.getCart).toHaveBeenCalledWith('user-1');
   });
 
   it('addItem should delegate to the service', () => {

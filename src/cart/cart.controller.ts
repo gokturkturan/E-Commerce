@@ -24,7 +24,7 @@ export class CartController {
 
   @Get()
   getCart(@CurrentUser() user: AuthenticatedUser) {
-    return this.cartService.getOrCreateCart(user.userId);
+    return this.cartService.getCart(user.userId);
   }
 
   @Post('items')

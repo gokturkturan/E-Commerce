@@ -1,10 +1,12 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { NotFoundException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { CartService } from './cart.service';
 import { Cart } from './entities/cart.entity';
 import { CartItem } from './entities/cart-item.entity';
 import { Product } from '../products/entities/product.entity';
+import { PricingService } from '../pricing/pricing.service';
 
 describe('CartService', () => {
   let service: CartService;
@@ -38,6 +40,12 @@ describe('CartService', () => {
         {
           provide: getRepositoryToken(Product),
           useValue: mockProductRepository,
+        },
+        {
+          provide: PricingService,
+          useValue: new PricingService({
+            get: (_key: string, fallback?: string) => fallback,
+          } as unknown as ConfigService),
         },
       ],
     }).compile();
@@ -83,7 +91,12 @@ describe('CartService', () => {
   });
 
   describe('addItem', () => {
-    const product = { id: 'prod-1', name: 'Headphones', price: 299.9 };
+    const product = {
+      id: 'prod-1',
+      name: 'Headphones',
+      price: 299.9,
+      stock: 10,
+    };
 
     it('should throw NotFoundException when the product does not exist', async () => {
       mockCartRepository.findOne.mockResolvedValue({
@@ -131,6 +144,58 @@ describe('CartService', () => {
     });
   });
 
+  describe('addItem stock rules', () => {
+    it('should reject a product that is out of stock', async () => {
+      mockCartRepository.findOne.mockResolvedValue({ id: 'cart-1', items: [] });
+      mockProductRepository.findOne.mockResolvedValue({
+        id: 'prod-1',
+        name: 'Headphones',
+        price: 299.9,
+        stock: 0,
+      });
+
+      await expect(
+        service.addItem('user-1', { productId: 'prod-1', quantity: 1 }),
+      ).rejects.toThrow(BadRequestException);
+      expect(mockCartItemRepository.save).not.toHaveBeenCalled();
+    });
+
+    it('should reject a quantity that, with what is already in the cart, exceeds the stock', async () => {
+      const product = { id: 'prod-1', name: 'Headphones', price: 10, stock: 5 };
+      mockCartRepository.findOne.mockResolvedValue({
+        id: 'cart-1',
+        items: [{ id: 'item-1', product, quantity: 4 }],
+      });
+      mockProductRepository.findOne.mockResolvedValue(product);
+
+      await expect(
+        service.addItem('user-1', { productId: 'prod-1', quantity: 2 }),
+      ).rejects.toThrow('Only 5 of Headphones in stock');
+      expect(mockCartItemRepository.save).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('getCart', () => {
+    it('should attach a price summary with shipping to the cart', async () => {
+      mockCartRepository.findOne.mockResolvedValue({
+        id: 'cart-1',
+        items: [
+          { id: 'item-1', quantity: 2, product: { price: 12.5 } },
+          { id: 'item-2', quantity: 1, product: { price: 5 } },
+        ],
+      });
+
+      const result = await service.getCart('user-1');
+
+      expect(result.summary).toEqual({
+        subtotal: 30,
+        shippingFee: 4.99,
+        total: 34.99,
+        freeShippingThreshold: 50,
+      });
+    });
+  });
+
   describe('updateItem', () => {
     it('should throw NotFoundException when the item does not exist', async () => {
       mockCartItemRepository.findOne.mockResolvedValue(null);
@@ -155,6 +220,7 @@ describe('CartService', () => {
       const item = {
         id: 'item-1',
         quantity: 2,
+        product: { id: 'prod-1', name: 'Headphones', price: 299.9, stock: 10 },
         cart: { id: 'cart-1', user: { id: 'user-1' } },
       };
       mockCartItemRepository.findOne.mockResolvedValue(item);
@@ -168,6 +234,22 @@ describe('CartService', () => {
       expect(mockCartItemRepository.save).toHaveBeenCalledWith(
         expect.objectContaining({ quantity: 7 }),
       );
+    });
+  });
+
+  describe('updateItem stock rules', () => {
+    it('should reject a quantity above the available stock', async () => {
+      mockCartItemRepository.findOne.mockResolvedValue({
+        id: 'item-1',
+        quantity: 1,
+        product: { id: 'prod-1', name: 'Headphones', price: 10, stock: 3 },
+        cart: { id: 'cart-1', user: { id: 'user-1' } },
+      });
+
+      await expect(
+        service.updateItem('user-1', 'item-1', { quantity: 4 }),
+      ).rejects.toThrow(BadRequestException);
+      expect(mockCartItemRepository.save).not.toHaveBeenCalled();
     });
   });
 
