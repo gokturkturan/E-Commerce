@@ -152,6 +152,9 @@ export class OrdersService {
 
     return this.dataSource.transaction(async (manager) => {
       for (const item of order.items) {
+        // A product deleted since the order was placed has nothing to restock.
+        if (!item.product) continue;
+
         await manager.increment(
           Product,
           { id: item.product.id },

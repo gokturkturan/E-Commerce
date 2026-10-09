@@ -136,10 +136,19 @@ describe('ProductsService', () => {
   });
 
   describe('remove', () => {
-    it('should delete the product by id', () => {
-      service.remove('p1');
+    it('should delete the product by id', async () => {
+      mockProductRepository.findOne.mockResolvedValue({ id: 'p1' });
+
+      await service.remove('p1');
 
       expect(mockProductRepository.delete).toHaveBeenCalledWith('p1');
+    });
+
+    it('should throw NotFoundException when the product does not exist', async () => {
+      mockProductRepository.findOne.mockResolvedValue(null);
+
+      await expect(service.remove('p1')).rejects.toThrow(NotFoundException);
+      expect(mockProductRepository.delete).not.toHaveBeenCalled();
     });
   });
 });

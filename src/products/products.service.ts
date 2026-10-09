@@ -125,7 +125,13 @@ export class ProductsService {
     return this.productRepository.save(product);
   }
 
-  remove(id: string) {
-    return this.productRepository.delete(id);
+  /**
+   * Cart lines for the product are removed with it (ON DELETE CASCADE); order
+   * lines keep their productName/unitPrice snapshot and lose only the link
+   * (ON DELETE SET NULL), so order history stays intact.
+   */
+  async remove(id: string): Promise<void> {
+    await this.findOne(id);
+    await this.productRepository.delete(id);
   }
 }

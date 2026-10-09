@@ -304,6 +304,33 @@ describe('OrdersService', () => {
     });
   });
 
+  describe('cancel with a deleted product', () => {
+    it('should cancel the order and skip restocking lines whose product was deleted', async () => {
+      const order = {
+        id: 'order-1',
+        user: { id: 'user-1' },
+        status: OrderStatus.PENDING,
+        items: [
+          { product: null, quantity: 1 },
+          { product: { id: 'prod-1' }, quantity: 2 },
+        ],
+      };
+      mockOrdersRepository.findOne.mockResolvedValue(order);
+      mockManager.save.mockImplementation((o) => Promise.resolve(o));
+
+      const result = await service.cancel('user-1', 'order-1');
+
+      expect(mockManager.increment).toHaveBeenCalledTimes(1);
+      expect(mockManager.increment).toHaveBeenCalledWith(
+        Product,
+        { id: 'prod-1' },
+        'stock',
+        2,
+      );
+      expect(result.status).toBe(OrderStatus.CANCELLED);
+    });
+  });
+
   describe('findOneOrFail', () => {
     it('should return the order when it exists', async () => {
       const order = { id: 'order-1' };

@@ -17,8 +17,9 @@ export class OrderItem {
   @ManyToOne(() => Order)
   order: Order;
 
-  @ManyToOne(() => Product)
-  product: Product;
+  /** Null once the product is deleted; productName and unitPrice keep the history. */
+  @ManyToOne(() => Product, { nullable: true, onDelete: 'SET NULL' })
+  product: Product | null;
 
   @Column()
   productName: string;
