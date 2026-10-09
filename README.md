@@ -19,14 +19,16 @@ The focus of this project is the backend concerns that matter in real commerce s
 
 - **Authentication** — register / login with bcrypt-hashed passwords, short-lived JWT access tokens and long-lived refresh tokens with **rotation** and **logout (revocation)**
 - **Authorization** — role-based access (`customer`, `admin`) via a custom `@Roles()` decorator and `RolesGuard`
-- **Catalogue** — categories and products (CRUD; write operations admin-only) with server-side **search, filtering and sorting** (by name or category, category, price range, in-stock only)
-- **Cart** — one cart per user; add, update quantity, remove items or clear the whole cart; ownership checks on every item
-- **Orders** — create an order from the cart with a validated **shipping address**, pay, cancel, ship, with an explicit status state machine; admins can list all orders
+- **Catalogue** — categories and products (CRUD; write operations admin-only) with server-side **search, filtering and sorting** (by name or category, category, price range, in-stock only); validated, unique category slugs
+- **Cart** — one cart per user; add, update quantity, remove items or clear the whole cart; ownership checks on every item; **quantities limited to the available stock**; every response carries a **price summary** (subtotal, shipping, total)
+- **Server-side pricing** — shipping fee and free-shipping threshold are configured once and used for both the cart summary and the stored order, so the amount shown at checkout is the amount charged
+- **Orders** — create an order from the cart with a validated **shipping address**, pay, cancel, ship, with an explicit status state machine; orders store subtotal, shipping fee and total; admins can list all orders
+- **Safe deletes** — a category with products can't be deleted (`409`); deleting a product removes it from carts but keeps order history intact
 - **Oversell-safe stock reservation** — stock is decremented atomically inside a database transaction (see [Design notes](#design-notes))
 - **Event-driven** — every order lifecycle step (`order_created`, `order_paid`, `order_shipped`, `order_cancelled`) is published to RabbitMQ; a consumer stores a **notification** for the customer for each one
 - **Cross-cutting concerns** — global validation (`whitelist` + `transform`), global exception filter with a consistent error shape, request logging interceptor with response times, sensitive fields hidden from responses via `class-transformer`
 - **Frontend-ready** — CORS configured for the React UI via `CORS_ORIGIN`
-- **Tests** — 72 unit tests across services and controllers (Jest)
+- **Tests** — 89 unit tests across services and controllers (Jest)
 
 ## Tech stack
 
@@ -97,6 +99,10 @@ If any line affects zero rows, the whole transaction rolls back and the request 
 
 **Refresh-token rotation.** Refresh tokens are stored server-side as SHA-256 hashes, never in plain text. Every `/auth/refresh` call deletes the presented token and issues a new pair, so a refresh token can be used only once. `/auth/logout` revokes the token. bcrypt is deliberately *not* used for these tokens: it truncates input to 72 bytes, and JWTs for the same user share that prefix, so every token would have produced the same hash.
 
+**One source of truth for prices.** `PricingService` turns a subtotal into `{ subtotal, shippingFee, total }` using `SHIPPING_FEE` and `FREE_SHIPPING_THRESHOLD`, rounding to whole cents. The cart uses it for its summary and order creation uses it for the stored amounts, so the storefront never has to calculate money on its own.
+
+**Deleting without breaking history.** Cart lines reference products with `ON DELETE CASCADE`, so a deleted product simply disappears from carts. Order lines use `ON DELETE SET NULL` and already keep `productName` and `unitPrice`, so past orders still show what was bought and for how much. Categories that still contain products are rejected with `409 Conflict` instead of failing on a foreign-key error.
+
 **Consistent error responses.** All errors go through `GlobalExceptionFilter` and share one shape:
 
 ```json
@@ -118,12 +124,12 @@ Unexpected (non-HTTP) exceptions are logged and returned as a generic `500` with
 | GET | `/users/me` 🔒 | Current user's profile |
 | GET | `/categories` | List categories |
 | GET | `/categories/:id` | Get a category |
-| POST · PATCH · DELETE | `/categories[/:id]` 🔒👑 | Manage categories |
+| POST · PATCH · DELETE | `/categories[/:id]` 🔒👑 | Manage categories · slug: `a-z`, `0-9`, `-`; duplicate name/slug or deleting a non-empty category → `409` |
 | GET | `/products` | List products · query: `search`, `categoryId`, `minPrice`, `maxPrice`, `inStock`, `sort` (`newest`, `price-asc`, `price-desc`, `name`) |
 | GET | `/products/:id` | Get a product |
 | POST · PATCH · DELETE | `/products[/:id]` 🔒👑 | Manage products |
-| GET | `/cart` 🔒 | Get (or lazily create) the user's cart |
-| POST | `/cart/items` 🔒 | Add a product to the cart |
+| GET | `/cart` 🔒 | Get (or lazily create) the user's cart, with `summary: { subtotal, shippingFee, total, freeShippingThreshold }` |
+| POST | `/cart/items` 🔒 | Add a product to the cart (rejected with `400` above the available stock) |
 | PATCH | `/cart/items/:id` 🔒 | Change an item's quantity |
 | DELETE | `/cart/items/:id` 🔒 | Remove an item |
 | DELETE | `/cart` 🔒 | Clear the whole cart |
@@ -191,6 +197,8 @@ curl -X POST localhost:3000/orders/<order-uuid>/pay -H "Authorization: Bearer $T
 | `RABBITMQ_PORT` / `RABBITMQ_MANAGEMENT_PORT` | Host ports for RabbitMQ (Docker) | `5672` / `15672` |
 | `PORT` | HTTP port of the API | `3000` |
 | `CORS_ORIGIN` | Allowed frontend origin | `http://localhost:5173` |
+| `SHIPPING_FEE` | Shipping fee below the free-shipping threshold | `4.99` |
+| `FREE_SHIPPING_THRESHOLD` | Order subtotal from which shipping is free | `50` |
 | `JWT_SECRET` / `JWT_EXPIRES_IN` | Access-token secret and lifetime | `15m` |
 | `JWT_REFRESH_SECRET` / `JWT_REFRESH_EXPIRES_IN` | Refresh-token secret and lifetime | `7d` |
 
@@ -213,6 +221,7 @@ src/
 ├── cart/          # per-user cart and cart items
 ├── orders/        # order lifecycle, stock reservation, event publishing and consumer
 ├── notifications/ # notifications stored for every order event
+├── pricing/       # shipping and total calculation shared by cart and orders
 ├── common/        # global exception filter, logging interceptor
 ├── app.module.ts
 └── main.ts
@@ -226,7 +235,6 @@ Planned next steps:
 - **Transactional outbox:** publish order events only after the transaction commits, so no event is ever sent for a rolled-back order
 - **Durable messaging:** make the queue durable and use manual acknowledgements, so events survive a broker restart and are not lost if the consumer fails
 - **Notifications endpoint:** let users read and mark their notifications as read
-- **Shipping fee on the server:** calculate shipping in the order total, so the checkout total in the UI and the stored order total always match
 - **Payment provider integration:** mock provider with signed webhook handling
 - **Database migrations:** replace TypeORM `synchronize` with versioned migrations
 - **OpenAPI / Swagger** documentation
