@@ -4,6 +4,8 @@ A REST backend for an online shop: authentication, product catalogue, shopping c
 
 The focus of this project is the backend concerns that matter in real commerce systems: data consistency under concurrent orders, a clear order state machine, token-based auth with rotation, and event-driven integration.
 
+🖥️ **Frontend:** a React storefront and admin panel built on this API lives in [ECommerce-React.js-UI-Project](https://github.com/gokturkturan/ECommerce-React.js-UI-Project).
+
 ![NestJS](https://img.shields.io/badge/NestJS-E0234E?logo=nestjs&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-4169E1?logo=postgresql&logoColor=white)
@@ -17,13 +19,14 @@ The focus of this project is the backend concerns that matter in real commerce s
 
 - **Authentication** — register / login with bcrypt-hashed passwords, short-lived JWT access tokens and long-lived refresh tokens with **rotation** and **logout (revocation)**
 - **Authorization** — role-based access (`customer`, `admin`) via a custom `@Roles()` decorator and `RolesGuard`
-- **Catalogue** — categories and products (CRUD; write operations admin-only)
-- **Cart** — one cart per user; add, update quantity, remove items; ownership checks on every item
-- **Orders** — create an order from the cart, pay, cancel, ship, with an explicit status state machine
+- **Catalogue** — categories and products (CRUD; write operations admin-only) with server-side **search, filtering and sorting** (by name or category, category, price range, in-stock only)
+- **Cart** — one cart per user; add, update quantity, remove items or clear the whole cart; ownership checks on every item
+- **Orders** — create an order from the cart with a validated **shipping address**, pay, cancel, ship, with an explicit status state machine; admins can list all orders
 - **Oversell-safe stock reservation** — stock is decremented atomically inside a database transaction (see [Design notes](#design-notes))
-- **Event-driven** — an `order_created` event is published to RabbitMQ and consumed by a separate handler
+- **Event-driven** — every order lifecycle step (`order_created`, `order_paid`, `order_shipped`, `order_cancelled`) is published to RabbitMQ; a consumer stores a **notification** for the customer for each one
 - **Cross-cutting concerns** — global validation (`whitelist` + `transform`), global exception filter with a consistent error shape, request logging interceptor with response times, sensitive fields hidden from responses via `class-transformer`
-- **Tests** — 71 unit tests across services and controllers (Jest)
+- **Frontend-ready** — CORS configured for the React UI via `CORS_ORIGIN`
+- **Tests** — 72 unit tests across services and controllers (Jest)
 
 ## Tech stack
 
@@ -46,11 +49,13 @@ The focus of this project is the backend concerns that matter in real commerce s
                   │        ▲                                                   │               │
                   │        └── LoggingInterceptor · GlobalExceptionFilter      │ TypeORM       │
                   │                                                            ▼               │
-                  │  Modules: auth · users · categories · products · cart · orders            │
+                  │  Modules: auth · users · categories · products · cart · orders ·          │
+                  │           notifications                                                    │
                   │                                     │                                      │
                   └─────────────────────────────────────┼──────────────────────────────────────┘
                                                         │                        │
-                                          emit "order_created"                   ▼
+                                   emit order_created / paid /                   ▼
+                                       shipped / cancelled
                                                         ▼                 ┌──────────────┐
                                              ┌────────────────────┐       │  PostgreSQL  │
                                              │ RabbitMQ           │       └──────────────┘
@@ -59,6 +64,10 @@ The focus of this project is the backend concerns that matter in real commerce s
                                                        ▼
                                              OrderEventsController
                                              (@EventPattern consumer)
+                                                       │
+                                                       ▼
+                                             NotificationsService
+                                             → notifications table
 ```
 
 Each domain lives in its own Nest module (`src/<module>`) with its controller, service, DTOs, entities and specs. Shared concerns live in `src/common`.
@@ -74,7 +83,7 @@ Each domain lives in its own Nest module (`src/<module>`) with its controller, s
  CANCELLED
 ```
 
-Any transition not shown above is rejected with `400 Bad Request`.
+Any transition not shown above is rejected with `400 Bad Request`. Each successful transition publishes the matching event (`order_created`, `order_paid`, `order_shipped`, `order_cancelled`).
 
 ## Design notes
 
@@ -84,7 +93,7 @@ Any transition not shown above is rejected with `400 Bad Request`.
 UPDATE products SET stock = stock - :qty WHERE id = :id AND stock >= :qty
 ```
 
-If any line affects zero rows, the whole transaction rolls back and the request fails with `Insufficient stock`. The check and the decrement are one atomic operation, so two concurrent checkouts cannot both take the last item, and no explicit row locks or read-then-write logic are needed. Order lines also store a snapshot of `productName` and `unitPrice`, so later price changes do not rewrite order history.
+If any line affects zero rows, the whole transaction rolls back and the request fails with `Insufficient stock`. The check and the decrement are one atomic operation, so two concurrent checkouts cannot both take the last item, and no explicit row locks or read-then-write logic are needed. Order lines also store a snapshot of `productName` and `unitPrice`, and the shipping address is stored with the order as JSONB, so later product or profile changes do not rewrite order history.
 
 **Refresh-token rotation.** Refresh tokens are stored server-side as SHA-256 hashes, never in plain text. Every `/auth/refresh` call deletes the presented token and issues a new pair, so a refresh token can be used only once. `/auth/logout` revokes the token. bcrypt is deliberately *not* used for these tokens: it truncates input to 72 bytes, and JWTs for the same user share that prefix, so every token would have produced the same hash.
 
@@ -110,15 +119,17 @@ Unexpected (non-HTTP) exceptions are logged and returned as a generic `500` with
 | GET | `/categories` | List categories |
 | GET | `/categories/:id` | Get a category |
 | POST · PATCH · DELETE | `/categories[/:id]` 🔒👑 | Manage categories |
-| GET | `/products` | List products |
+| GET | `/products` | List products · query: `search`, `categoryId`, `minPrice`, `maxPrice`, `inStock`, `sort` (`newest`, `price-asc`, `price-desc`, `name`) |
 | GET | `/products/:id` | Get a product |
 | POST · PATCH · DELETE | `/products[/:id]` 🔒👑 | Manage products |
 | GET | `/cart` 🔒 | Get (or lazily create) the user's cart |
 | POST | `/cart/items` 🔒 | Add a product to the cart |
 | PATCH | `/cart/items/:id` 🔒 | Change an item's quantity |
 | DELETE | `/cart/items/:id` 🔒 | Remove an item |
-| POST | `/orders` 🔒 | Create an order from the cart |
+| DELETE | `/cart` 🔒 | Clear the whole cart |
+| POST | `/orders` 🔒 | Create an order from the cart · body: `shippingAddress` |
 | GET | `/orders` 🔒 | List the user's orders |
+| GET | `/orders/admin/all` 🔒👑 | List all orders, newest first |
 | GET | `/orders/:id` 🔒 | Get one of the user's orders |
 | POST | `/orders/:id/pay` 🔒 | Mark a pending order as paid |
 | POST | `/orders/:id/cancel` 🔒 | Cancel a pending order and return stock |
@@ -163,8 +174,10 @@ curl -X POST localhost:3000/cart/items -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"productId":"<product-uuid>","quantity":2}'
 
-# Check out, then pay
-curl -X POST localhost:3000/orders -H "Authorization: Bearer $TOKEN"
+# Check out with a shipping address, then pay
+curl -X POST localhost:3000/orders -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"shippingAddress":{"firstName":"Jane","lastName":"Doe","email":"jane@example.com","phone":"+49 170 0000000","address":"Main St 1","city":"Frankfurt","district":"Innenstadt"}}'
 curl -X POST localhost:3000/orders/<order-uuid>/pay -H "Authorization: Bearer $TOKEN"
 ```
 
@@ -177,6 +190,7 @@ curl -X POST localhost:3000/orders/<order-uuid>/pay -H "Authorization: Bearer $T
 | `RABBITMQ_USER` / `RABBITMQ_PASSWORD` | RabbitMQ credentials | `ecommerce` |
 | `RABBITMQ_PORT` / `RABBITMQ_MANAGEMENT_PORT` | Host ports for RabbitMQ (Docker) | `5672` / `15672` |
 | `PORT` | HTTP port of the API | `3000` |
+| `CORS_ORIGIN` | Allowed frontend origin | `http://localhost:5173` |
 | `JWT_SECRET` / `JWT_EXPIRES_IN` | Access-token secret and lifetime | `15m` |
 | `JWT_REFRESH_SECRET` / `JWT_REFRESH_EXPIRES_IN` | Refresh-token secret and lifetime | `7d` |
 
@@ -197,7 +211,8 @@ src/
 ├── categories/    # category CRUD
 ├── products/      # product CRUD
 ├── cart/          # per-user cart and cart items
-├── orders/        # order lifecycle, stock reservation, RabbitMQ event consumer
+├── orders/        # order lifecycle, stock reservation, event publishing and consumer
+├── notifications/ # notifications stored for every order event
 ├── common/        # global exception filter, logging interceptor
 ├── app.module.ts
 └── main.ts
@@ -208,7 +223,10 @@ src/
 Planned next steps:
 
 - **Idempotent payments:** `Idempotency-Key` header and a conditional status update on `/orders/:id/pay`, so retried or concurrent requests cannot double-process a payment
-- **Transactional outbox:** publish `order_created` only after the transaction commits, so no event is ever sent for a rolled-back order
+- **Transactional outbox:** publish order events only after the transaction commits, so no event is ever sent for a rolled-back order
+- **Durable messaging:** make the queue durable and use manual acknowledgements, so events survive a broker restart and are not lost if the consumer fails
+- **Notifications endpoint:** let users read and mark their notifications as read
+- **Shipping fee on the server:** calculate shipping in the order total, so the checkout total in the UI and the stored order total always match
 - **Payment provider integration:** mock provider with signed webhook handling
 - **Database migrations:** replace TypeORM `synchronize` with versioned migrations
 - **OpenAPI / Swagger** documentation
