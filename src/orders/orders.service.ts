@@ -14,6 +14,7 @@ import { User } from '../users/entities/user.entity';
 import { CartItem } from '../cart/entities/cart-item.entity';
 import { ClientProxy } from '@nestjs/microservices';
 import { ShippingAddressDto } from './dto/create-order.dto';
+import { PricingService } from '../pricing/pricing.service';
 
 @Injectable()
 export class OrdersService {
@@ -24,6 +25,7 @@ export class OrdersService {
     private readonly cartService: CartService,
     @Inject('ORDER_EVENTS_SERVICE')
     private readonly orderEventsClient: ClientProxy,
+    private readonly pricingService: PricingService,
   ) {}
 
   async create(
@@ -37,7 +39,7 @@ export class OrdersService {
     }
 
     return this.dataSource.transaction(async (manager) => {
-      let total = 0;
+      let subtotal = 0;
       const orderItemsData: Partial<OrderItem>[] = [];
 
       for (const cartItem of cart.items) {
@@ -57,7 +59,7 @@ export class OrdersService {
           );
         }
 
-        total += cartItem.product.price * cartItem.quantity;
+        subtotal += cartItem.product.price * cartItem.quantity;
         orderItemsData.push({
           product: cartItem.product,
           productName: cartItem.product.name,
@@ -66,9 +68,13 @@ export class OrdersService {
         });
       }
 
+      const prices = this.pricingService.summarize(subtotal);
+
       const order = manager.create(Order, {
         user: { id: userId } as User,
-        total,
+        subtotal: prices.subtotal,
+        shippingFee: prices.shippingFee,
+        total: prices.total,
         items: orderItemsData as OrderItem[],
         shippingAddress,
       });
@@ -90,6 +96,7 @@ export class OrdersService {
     return this.ordersRepository.find({
       where: { user: { id: userId } },
       relations: { items: { product: { category: true } } },
+      order: { createdAt: 'DESC' },
     });
   }
 
@@ -103,7 +110,7 @@ export class OrdersService {
   async findOneForUser(userId: string, orderId: string): Promise<Order> {
     const order = await this.ordersRepository.findOne({
       where: { id: orderId },
-      relations: { items: { product: true }, user: true },
+      relations: { items: { product: { category: true } }, user: true },
     });
 
     if (!order || order.user.id !== userId) {

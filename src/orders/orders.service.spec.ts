@@ -6,9 +6,21 @@ import { Order, OrderStatus } from './entities/order.entity';
 import { CartItem } from '../cart/entities/cart-item.entity';
 import { Product } from '../products/entities/product.entity';
 import { CartService } from '../cart/cart.service';
+import { ConfigService } from '@nestjs/config';
+import { PricingService } from '../pricing/pricing.service';
 
 describe('OrdersService', () => {
   let service: OrdersService;
+
+  const shippingAddress = {
+    firstName: 'Jane',
+    lastName: 'Doe',
+    email: 'jane@example.com',
+    phone: '+49 170 0000000',
+    address: 'Main St 1',
+    city: 'Frankfurt',
+    district: 'Innenstadt',
+  };
 
   const mockOrdersRepository = {
     find: jest.fn(),
@@ -69,6 +81,12 @@ describe('OrdersService', () => {
           provide: 'ORDER_EVENTS_SERVICE',
           useValue: mockClientProxy,
         },
+        {
+          provide: PricingService,
+          useValue: new PricingService({
+            get: (_key: string, fallback?: string) => fallback,
+          } as unknown as ConfigService),
+        },
       ],
     }).compile();
 
@@ -90,7 +108,7 @@ describe('OrdersService', () => {
         items: [],
       });
 
-      await expect(service.create('user-1')).rejects.toThrow(
+      await expect(service.create('user-1', shippingAddress)).rejects.toThrow(
         BadRequestException,
       );
     });
@@ -108,7 +126,7 @@ describe('OrdersService', () => {
       mockCartService.getOrCreateCart.mockResolvedValue(cart);
       mockQueryBuilder.execute.mockResolvedValue({ affected: 0 });
 
-      await expect(service.create('user-1')).rejects.toThrow(
+      await expect(service.create('user-1', shippingAddress)).rejects.toThrow(
         BadRequestException,
       );
     });
@@ -131,7 +149,7 @@ describe('OrdersService', () => {
       mockManager.create.mockReturnValue(createdOrder);
       mockManager.save.mockResolvedValue(savedOrder);
 
-      const result = await service.create('user-1');
+      const result = await service.create('user-1', shippingAddress);
 
       expect(mockManager.delete).toHaveBeenCalledWith(CartItem, {
         cart: { id: 'cart-1' },
@@ -142,6 +160,54 @@ describe('OrdersService', () => {
         total: 599.8,
       });
       expect(result).toEqual(savedOrder);
+    });
+
+    it('should store the subtotal, free shipping and total for orders above the threshold', async () => {
+      mockCartService.getOrCreateCart.mockResolvedValue({
+        id: 'cart-1',
+        items: [
+          {
+            product: { id: 'prod-1', name: 'Headphones', price: 299.9 },
+            quantity: 2,
+          },
+        ],
+      });
+      mockQueryBuilder.execute.mockResolvedValue({ affected: 1 });
+      mockManager.save.mockResolvedValue({ id: 'order-1', total: 599.8 });
+
+      await service.create('user-1', shippingAddress);
+
+      expect(mockManager.create).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          subtotal: 599.8,
+          shippingFee: 0,
+          total: 599.8,
+          shippingAddress,
+        }),
+      );
+    });
+
+    it('should add the shipping fee to the total for small orders', async () => {
+      mockCartService.getOrCreateCart.mockResolvedValue({
+        id: 'cart-1',
+        items: [
+          { product: { id: 'prod-2', name: 'Mug', price: 9.5 }, quantity: 2 },
+        ],
+      });
+      mockQueryBuilder.execute.mockResolvedValue({ affected: 1 });
+      mockManager.save.mockResolvedValue({ id: 'order-2', total: 23.99 });
+
+      await service.create('user-1', shippingAddress);
+
+      expect(mockManager.create).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          subtotal: 19,
+          shippingFee: 4.99,
+          total: 23.99,
+        }),
+      );
     });
   });
 
