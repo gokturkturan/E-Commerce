@@ -47,9 +47,10 @@ describe('ProductsController', () => {
     expect(mockProductsService.create).toHaveBeenCalledWith(dto);
   });
 
-  it('findAll should delegate to the service', () => {
-    controller.findAll();
-    expect(mockProductsService.findAll).toHaveBeenCalled();
+  it('findAll should pass the query filters to the service', () => {
+    const query = { search: 'lamp', sort: 'price-asc' as const };
+    controller.findAll(query);
+    expect(mockProductsService.findAll).toHaveBeenCalledWith(query);
   });
 
   it('findOne should delegate to the service with the id', () => {
