@@ -9,6 +9,7 @@ import { CategoriesModule } from './categories/categories.module';
 import { ProductsModule } from './products/products.module';
 import { CartModule } from './cart/cart.module';
 import { OrdersModule } from './orders/orders.module';
+import { PricingModule } from './pricing/pricing.module';
 import { NotificationsModule } from './notifications/notifications.module';
 
 @Module({
@@ -29,6 +30,7 @@ import { NotificationsModule } from './notifications/notifications.module';
         synchronize: true,
       }),
     }),
+    PricingModule,
     UsersModule,
     AuthModule,
     CategoriesModule,
